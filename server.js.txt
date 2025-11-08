@@ -1,0 +1,50 @@
+const express = require('express');
+const multer = require('multer');
+const { S3Client, PutObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const path = require('path');
+const crypto = require('crypto');
+
+const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
+
+const REGION = process.env.AWS_REGION;
+const BUCKET = process.env.S3_BUCKET;
+
+const s3 = new S3Client({ region: REGION });
+
+app.post('/upload', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).send('No file uploaded');
+
+    const key = `images/${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(req.file.originalname)}`;
+
+    await s3.send(new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype
+    }));
+
+    const url = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
+    res.json({ message: 'Uploaded successfully', url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/images', async (req, res) => {
+  try {
+    const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: 'images/' }));
+    const images = (list.Contents || []).map(o => ({
+      key: o.Key,
+      url: `https://${BUCKET}.s3.${REGION}.amazonaws.com/${o.Key}`
+    }));
+    res.json(images);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(4000, () => console.log('Server running on port 4000'));
